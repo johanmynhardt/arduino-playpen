@@ -8,7 +8,9 @@
                                                com.sparetimelabs/purejavacomm
                                                clj-serial/clj-serial]}
 
-        clj-serial/clj-serial {:mvn/version "2.0.5"}}
+        clj-serial/clj-serial {:mvn/version "2.0.5"}
+
+        com.stuartsierra/component {:mvn/version "1.0.0"}}
 
  :aliases
  {:inspect/reveal-nrepl-cider
