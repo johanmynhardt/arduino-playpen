@@ -4,7 +4,8 @@
 
 (defonce ctx
   (atom {:board nil
-         :motor-speed 0}))
+         :motor {:speed 0
+                 :state :low}}))
 
 (defn reset-board
   []
@@ -15,6 +16,11 @@
   {:high :low
    :low :high})
 
+(defn update-motor
+  [motor-pin]
+  (let [{:keys [state speed]} (-> @ctx :motor)]
+    (fc/set-analog (:board @ctx) motor-pin (if (= :high state) speed 0))))
+
 (def pins
   {:control1 {:pin 2 :mode :output :value :low :hbridge/pin 7}
    :control2 {:pin 3 :mode :output :value :low :hbridge/pin 2}
@@ -23,40 +29,31 @@
    :direction {:pin 4 :mode :input :value :low
                :on-event
                (fn [{:keys [value] :as event}]
-                 #_(tap> (assoc event
-                              :message  "direction toggle"
-                              :control1 {:pin (-> pins :control1 :pin) :value value}
-                              :control2 {:pin (-> pins :control2 :pin) :value (hl-switch value)}))
-
                  (fc/set-digital (:board @ctx) (-> pins :control1 :pin) value)
                  (fc/set-digital (:board @ctx) (-> pins :control2 :pin) (hl-switch value)))}
 
    :onOff {:pin 5 :mode :input :value 0
            :on-event
            (fn [{:keys [value] :as event}]
-             (let [ms          (:motor-speed @ctx)
-                   motor-speed (if (and (pos? ms) (= value :high)) (int (/ ms 4)) 0)]
-               #_(tap> (-> event
-                         (assoc :message "setting motor speed")
-                         (assoc :enable {:pin (-> pins :enable :pin) :value motor-speed})))
-
-               (fc/set-analog (:board @ctx) (-> pins :enable :pin) motor-speed)))}
+             (swap! ctx assoc-in [:motor :state] value)
+             (update-motor (-> pins :enable :pin)))}
 
    :pot {:pin 0 :mode :analog :value 0
          :on-event
          (fn [{:keys [value] :as event}]
-           #_(println "pot changed: " event)
-           (swap! ctx assoc :motor-speed value))}})
+           (swap! ctx assoc-in [:motor :speed] (if (pos? value) (int (/ value 4)) 0))
+           (update-motor (-> pins :enable :pin)))}})
 
 (defn hook-up-on-event
   [board {:keys [pin mode on-event] :as pin-config}]
+  (println {:fn ::hook-up-on-event :pin-config pin-config})
   (when on-event
     (let [{:keys [topic-type reporting-fn]}
           (-> {:analog
                {:topic-type :analog-msg
                 :reporting-fn #'fc/enable-analog-in-reporting}
 
-               :digital
+               :input
                {:topic-type :digital-msg
                 :reporting-fn #'fc/enable-digital-port-reporting}}
               (get mode))
@@ -87,7 +84,7 @@
 (defn setup
   [board]
   (doseq [[k v] pins]
-    (println "setting up pin: " k)
+    (tap> {:message "setting up pin" :pin k :config v})
     (setup-pin board v)))
 
 (comment
