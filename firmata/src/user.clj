@@ -1,122 +1,91 @@
 (ns user
-  (:require [firmata.core :as f]
-            [firmata.async :as f.a]
-            [clojure.core.async :refer [<!! <! go-loop] :as a]))
+  (:require [clojure.core.async :as a :refer [<! <!!]]
+            [clojure.set :as set]
+            [firmata.core :as f]
+            [util :refer [raw->pwm raw->tmp]]))
 
-(defn raw->pwm [value]
-  (-> value
-      (* (/ 255 1023))
-      int))
+(defonce ctx (atom {}))
 
-#_(def board (f/open-serial-board  :auto-detect #_#_:baud-rate 9600))
-#_(f/reset-board board)
-#_(f/close! board)
+(defn init []
+  (swap! ctx assoc :board (f/open-serial-board :auto-detect)))
+#_(init)
 
-#_(f/set-pin-mode)
-#_(-> board
-      (f/enable-analog-in-reporting 0 true))
+(defn reset []
+  (f/reset-board (:board @ctx)))
 
-#_(f/enable-analog-in-reporting board 0 true)
+(defn close []
+  (f/close! (:board @ctx)))
 
-#_(let [_ (f/enable-analog-in-reporting board 0 true)
-        ch    (f/event-channel board)
-        event (<!! ch)]
-    event)
+(defn stop-topic [ctx k]
+  (let [{:keys [topics board]} @ctx
+        {:keys [topic chan]} (get topics k)]
+    (a/unsub (f/event-publisher board) topic chan)
+    (swap! ctx assoc-in [:topics k :chan] nil)))
 
+(comment
+  #_(rvl/clear-output)
+  (init)
+  (reset)
+  (close))
+
+#_(ns-interns *ns*)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Potentiometer
+;; relay
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-#_(def analog-r
-    (let [_ (f/enable-analog-in-reporting board 0 true)
-          _ (f/set-pin-mode board 3 :pwm)
-          ch    (f/event-channel board)
-          last-v (atom 0)]
-      (future
-        (while true
-          (let [{:keys [value] :as msg} (<!! ch)
-                old-v @last-v]
-            (when (and (= :analog-msg (:type msg))
-                       (= 0 (:pin msg))
-                       (not= old-v (:value msg)))
-              (println msg)
-              (f/set-analog board 3 (raw->pwm value))
-              (reset! last-v (:value msg))
-              (f/set-digital
-               board 5
-               (if (= 1023 value)
-                 :high
-                 :low))))))))
 
-#_(future-cancel analog-r)
+(comment
+  (f/set-pin-mode (:board @ctx) 6 :output)
 
-#_(let [_ (f/enable-analog-in-reporting board 0 true)
-        _ (f/set-pin-mode board 3 :pwm)
-        sub-ch (a/chan)
-        lastv (atom 0)]
-    (swap! brd assoc :analog/sub-ch-0 sub-ch)
-    (a/sub (f/event-publisher board) [:analog-msg 0] sub-ch)
-    (a/go-loop []
-      (when-let [{:keys [value] :as event} (<! sub-ch)]
-        (when (not= value @lastv)
-          #_(println event)
-          (f/set-analog board 3 (raw->pwm value))
-          (reset! lastv value)
-          (when (= value 1023)
-            (a/go
-              (letter-sequence board 4 [:S :O :S])))))
-      (recur)))
+  (f/set-digital (:board @ctx) 6 :high)
 
-(defonce brd (atom {}))
+  (future (doseq [x (range 5)]
+            (let [rsleep (rand-nth (range 500 1000 5))]
+              (f/set-digital (:board @ctx) 6 :high)
+              (Thread/sleep rsleep)
+              (f/set-digital (:board @ctx) 6 :low)
+              (Thread/sleep rsleep))))
 
-(defn stop-sub [k]
-  (let [sub (get @brd k)]
-    (when sub
-      (a/close! sub)
-      (swap! brd assoc k nil))))
+  (+ 1 3)
+  )
 
-(stop-sub :analog/sub-ch-0)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Motor stuff
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Temperature
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment 
+  (f/set-pin-mode (:board @ctx) 2 :input)
+  (f/set-pin-mode (:board @ctx) 9 :output)
+
+  (def button-ch (a/chan))
+
+  (a/sub (f/event-publisher (:board @ctx)) [:digital-msg 2] button-ch)
+
+  (f/enable-digital-port-reporting (:board @ctx) 2 true)
+
+  (a/go-loop []
+    (when-let [event (<! button-ch)]
+      ;(println "button: " event)
+      (if (= :low (:value event)) (f/set-digital (:board @ctx) 9 :low)
+          (doseq [_ (range 20)]
+            (f/set-digital (:board @ctx) 9 :high)
+            (Thread/sleep 3)
+            (f/set-digital (:board @ctx) 9 :low)
+            (Thread/sleep 50))))
+    (recur))
 
 
 
-#_(def temp
-  (let [_ (f/enable-analog-in-reporting board 1 true)
-        ch (f/event-channel board)
-        alast (atom 0)]
-    (future
-      (while true
-        (let [{:keys [type pin value] :as event} (<!! ch)
-              last-v @alast]
-          (when (and (= :analog-msg type)
-                     (= 1 pin)
-                     (not= last-v value))
-            (reset! alast value)
-            (println "tempval: " value)))))))
+  (a/unsub (f/event-publisher (:board @ctx)) [:digital-msg 2] button-ch)
 
-#_(future-cancel temp)
 
-#_(f/set-pin-mode board 3 :output)
-#_(f/set-digital board 3 :low)
-#_(f/set-analog board 3 (int 254.0))
+  
 
-#_(f/reset-board board)
+  (a/timeout 500))
 
-#_(def analog-r2
-    (let [_ (f/enable-analog-in-reporting board 0 true)
-          ch (f.a/analog-event-chan board 0)]
-      (future
-        (a/go-loop [e (<!! ch)]
-          (println "e:" e)
-          (recur (<!! ch))))))
-
-#_(future-cancel analog-r2)
-
-#_(println "x")
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SOS stuff
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def pulse-rate
   {:s 100
@@ -141,6 +110,219 @@
     (letter board pin (l letters))
     (Thread/sleep 200)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Potentiometer
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn start-pot [ctx]
+  (let [board (:board @ctx)
+        sub-ch (a/chan)
+        lastv (atom 0)
+        topic [:analog-msg 0]]
+
+    (f/enable-analog-in-reporting board 0 true)
+    (f/set-pin-mode board 3 :pwm)
+
+    (a/sub (f/event-publisher board) topic sub-ch)
+
+    (a/go-loop []
+      (when-let [{:keys [value] :as event} (<! sub-ch)]
+        (when (not= value @lastv)
+          #_(println event)
+          (f/set-analog board 3 (raw->pwm value))
+          (reset! lastv value)
+          (swap! ctx assoc-in [:sensor :pot] value)
+          (when (= value 1023)
+            (a/go
+              (letter-sequence board 4 [:S :O :S])))))
+      (recur))
+    (swap! ctx assoc-in [:topics :pot]
+           {:topic topic
+            :chan sub-ch})))
+#_(start-pot ctx)
+#_(stop-topic ctx :pot)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Temperature
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn start-temp [ctx]
+  (when (-> @ctx :topics :temp :chan nil?)
+    (let [pin 1
+          board (:board @ctx)
+          sub-ch (a/chan)
+          last-v (atom 0)
+          topic [:analog-msg pin]]
+
+      (f/enable-analog-in-reporting board pin true)
+      (a/sub (f/event-publisher board) topic sub-ch)
+
+      (a/go-loop [vbuffer []]
+        (let [{:keys [value] :as event} (<! sub-ch)]
+          (cond (<= 50 (count vbuffer))
+                (let [avg
+                      (-> (reduce + vbuffer)
+                          (/ (count vbuffer))
+                          raw->tmp)]
+                  (swap! ctx assoc-in [:sensor :temp] avg)
+                  (recur []))
+
+                (and event (not= value @last-v))
+                (recur (conj vbuffer value))
+
+                :else (recur vbuffer))))
+
+      (swap! ctx assoc-in [:topics :temp]
+             {:topic topic
+              :chan sub-ch}))))
+
+#_(start-temp ctx)
+#_(-> @ctx :sensor)
+#_(stop-topic ctx :temp)
+
+#_(add-watch ctx :temp-watch
+             (fn [k r o n]
+               (let [ot (get-in o [:sensor])
+                     nt (get-in n [:sensor])]
+                 (println nt))))
+
+#_(remove-watch ctx :temp-watch)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Phototransistors
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn start-light-detection [ctx pin]
+  (let [topic-key (keyword (str "lightsensor-" pin))]
+    (when (-> @ctx :topics topic-key :chan nil?)
+      (let [board (:board @ctx)
+            sub-ch (a/chan)
+            last-v (atom 0)
+            topic [:analog-msg pin]]
+
+        (f/enable-analog-in-reporting board pin true)
+        (a/sub (f/event-publisher board) topic sub-ch)
+
+        (a/go-loop []
+          (let [{:keys [value] :as event} (<! sub-ch)]
+            (swap! ctx assoc-in [:sensor topic-key] value)
+            #_(println (format "%s:%s" pin value))
+            #_(println pin ":"
+                     (str/join ""
+                               (take (-> value
+                                         (/ 10)
+                                         int)
+                                     (repeatedly (constantly "*")))))
+            (recur)))
+
+        (swap! ctx assoc-in [:topics topic-key]
+               {:topic topic
+                :chan sub-ch})))))
+
+
+
+#_(start-light-detection ctx 1)
+#_(->> (range 3)
+       (map (partial start-light-detection ctx)))
+
+#_(stop-topic ctx :lightsensor-0)
+#_(->> (range 3)
+       (map #(keyword (str "lightsensor-" %)))
+       (map (partial stop-topic ctx)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; servo
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(comment
+
+  (f/set-pin-mode (:board @ctx) 9 :servo)
+  (f/set-analog (:board @ctx) 9 0)
+
+
+  (f/set-pin-mode (:board @ctx) 0 :input)
+
+  (f/enable-analog-in-reporting (:board @ctx) 0 true)
+
+  (def sub-ch (a/chan))
+
+  (a/unsub (f/event-publisher (:board @ctx)) [:analog-msg 0] sub-ch)
+
+  (a/sub (f/event-publisher (:board @ctx)) [:analog-msg 0] sub-ch)
+
+  (def pot-future
+    (future
+      (a/go-loop []
+        (when-let [event (<! sub-ch)]
+          (let [{:keys [out-val]} (-> (:value event)
+                                      (util/translate {:in/min 0 :in/max 1023 :out/min 0 :out/max 180}))]
+            ;(println event ":" out-val)
+            (f/set-analog (:board @ctx) 9 (int out-val))))
+        (Thread/sleep 10)
+        (recur))))
+
+  (future-cancel pot-future)
+
+
+  (let [{:keys [board]} @ctx]
+    (f/set-analog board 9 90)
+    (Thread/sleep 2000)
+    (f/set-analog board 9 0)
+    (Thread/sleep 1000)
+    (f/set-analog board 9 180)
+    (Thread/sleep 1000)
+    (doseq [deg (shuffle (range 0 180 5))]
+      (f/set-analog board 9 deg)
+      (Thread/sleep 200))
+    (Thread/sleep 500)
+    (f/set-analog board 9 90))
+
+  (/ 180 5)
+
+  )
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(def lights
+  (future
+    (while true
+      (println (-> @ctx :sensor))
+      (Thread/sleep 200))))
+
+(future-cancel lights)
+
+(comment
+
+  (def rgbled-out
+    (future
+      (while true
+        (->> (set/rename-keys
+              (->> (seq (-> @ctx :sensor))
+                   (map (fn [[k v]] [k (raw->pwm v)]))
+                   (into {}))
+              {:lightsensor-0 9
+               :lightsensor-1 10
+               :lightsensor-2 11})
+             seq
+             (map (fn [[pin val]]
+                    #_(print ".")
+                    #_(println pin ":" val)
+                    (f/set-analog (:board @ctx) pin val)))
+             doall)
+        (Thread/sleep 10))))
+
+  (future-cancel rgbled-out)
+
+  (->> [9 10 11]
+       (map #(f/set-pin-mode (:board @ctx) % :pwm)))
+
+  (f/set-analog (:board @ctx) 9 0)
+  (f/set-analog (:board @ctx) 10 0)
+  (f/set-analog (:board @ctx) 11 0)
+  )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (comment
 
   (def puls
@@ -163,16 +345,18 @@
 
   (def sos-button
     (future
-      (-> board
-          (f/set-pin-mode 2 :input)
-          (f/enable-digital-port-reporting 2 true))
-      (let [ch (f/event-channel board)]
+      (let [{:keys [board]} @ctx
+            ch (f/event-channel board)]
+        (-> board
+            (f/set-pin-mode 2 :input)
+            (f/enable-digital-port-reporting 2 true))
+
         (while true
           (let [{:keys [type pin value]} (<!! ch)]
             (when (and (= :digital-msg type)
                        (= 2 pin)
                        (= :high value))
-              (letter-sequence board 4 [:S :O :S])))))))
+              (letter-sequence board 5 [:S :O :S])))))))
 
   (future-cancel sos-button)
   ,)
