@@ -23,10 +23,95 @@
     (swap! ctx assoc-in [:topics k :chan] nil)))
 
 (comment
-  #_(rvl/clear-output)
   (init)
   (reset)
   (close))
+
+(comment
+
+  (f/close! board)
+
+
+  (def board (f/open-serial-board :auto-detect))
+
+  (require '[partsbox.lcd :as lcd])
+
+
+  (def lcd (-> (lcd/create-lcd board 12 11 5 4 3 2)
+               (lcd/begin 16 2)
+               (lcd/display)
+               (lcd/blink)))
+
+  (def lcd (-> (lcd/create-lcd board 12 11 5 4 3 2)))
+
+  #_(reset)
+  (-> lcd
+      (lcd/clear)
+      (lcd/print "hello world")
+      #_(lcd/set-cursor 0 1)
+      #_(lcd/println "hello")
+      #_(lcd/blink))
+
+  (lcd/println lcd "")
+
+  (lcd/clear lcd)
+  (lcd/display lcd)
+
+  (lcd/blink lcd)
+  (lcd/no-blink lcd)
+  (lcd/display lcd)
+  (lcd/cursor lcd)
+
+  (-> (lcd/set-cursor lcd 0 0)
+      (lcd/clear)
+      (lcd/print "..."))
+
+  (lcd/home lcd)
+
+  (lcd/no-blink lcd)
+  (lcd/set-cursor lcd 0 2)
+
+  (-> (lcd/set-cursor lcd 0 0)
+      (lcd/clear)
+      (lcd/print "hi clj-firmata!"))
+
+  (-> lcd
+      (lcd/no-cursor))
+
+
+  (-> lcd
+      (lcd/begin 16 2)
+      (lcd/autoscroll))
+
+  (lcd/begin lcd4bm 16 1)
+  (lcd/print lcd4bm "xxx")
+
+  (lcd/println lcd "xxx")
+
+  (lcd/home lcd)
+  (-> lcd
+      (lcd/begin 16 2)
+      (lcd/blink)
+      #_((fn [x] (Thread/sleep 400) x))
+      (lcd/no-blink))
+
+
+  (-> lcd
+      (lcd/begin 16 2)
+      (lcd/set-cursor 0 0))
+
+  (lcd/clear lcd)
+
+  (lcd/blink lcd)
+
+  (-> lcd
+      (lcd/begin 16 2)
+      (lcd/blink))
+
+  (-> lcd
+      (lcd/begin 16 2)
+      (lcd/print "hello"))
+  )
 
 #_(ns-interns *ns*)
 

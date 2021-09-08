@@ -10,7 +10,9 @@
 
         clj-serial/clj-serial {:mvn/version "2.0.5"}
 
-        com.stuartsierra/component {:mvn/version "1.0.0"}}
+        com.stuartsierra/component {:mvn/version "1.0.0"}
+
+        #_#_partsbox/partsbox {:mvn/version "0.1.0-SNAPSHOT"}}
 
  :aliases
  {:inspect/reveal-nrepl-cider
