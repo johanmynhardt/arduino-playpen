@@ -1,10 +1,39 @@
 (ns lcd
   (:require [firmata.core :as f]
+            [firmata.async :as fa]
             [partsbox.lcd :as lcd]
+            [clojure.core.async :as a :refer [<! >! <!! chan go-loop alts! timeout]]
             [clojure.string :as str]))
+
+(defn debounce-chan
+  "Debouncer from: https://gist.github.com/xfsnowind/e15cc2e6da74df81f129"
+  ([source msecs]
+   (debounce-chan (chan) source msecs))
+  ([c source msecs]
+   (go-loop [state ::init
+             last-one nil
+             cs [source]]
+
+     (let [[_ threshold] cs
+           [v sc] (alts! cs)]
+       (condp = sc
+         source
+         (condp = state
+           ::init (recur ::debouncing v (conj cs (timeout msecs)))
+           ::debouncing (recur state v (conj (pop cs) (timeout msecs))))
+
+         threshold
+         (cond last-one
+               (do (>! c last-one)
+                   (recur ::init nil (pop cs)))
+
+               :else
+               (recur ::init last-one (pop cs))))))
+   c))
 
 (comment
 
+  (+ 2 2)
 
   (let [board (f/open-serial-board :auto-detect)
         lcd (-> (lcd/create-lcd board 12 11 5 4 3 2)
@@ -26,11 +55,73 @@
                (lcd/create-lcd 12 11 5 4 3 2)
                (lcd/clear)
                (lcd/begin 16 2)
-               (lcd/print "Init done! (^^,)")))
+               (lcd/print "Hello! (^^,)")
+               (lcd/no-blink)))
 
   (f/close! board)
 
-  (lcd/print lcd "0123456789abc")
+  ;;; Tilt switch
+
+  (f/enable-digital-port-reporting board 6 true)
+
+  (println "x")
+
+  (let [#_#_board (f/open-serial-board :auto-detect)
+        _
+        (do (f/set-pin-mode board 6 :input)
+            (f/enable-digital-port-reporting board 6 true))
+
+        lcd (-> board
+                (lcd/create-lcd 12 11 5 4 3 2)
+                (lcd/clear)
+                (lcd/begin 16 2)
+                (lcd/print "Hello! (^^,)")
+                (lcd/no-blink))
+
+        tc (chan)
+        tsub (-> (f/event-publisher board)
+                 (a/sub [:digital-msg 6] tc)
+                 (debounce-chan 100))]
+    (lcd/clear lcd)
+    (lcd/print lcd "Start tilting!")
+    (let [gl
+          (a/go-loop [x 0]
+            #_(a/timeout 100)
+            (when-let [event (<! tsub)]
+              (println event)
+              (println "---" x)
+              (condp = (:value event)
+                :low (do
+                        (lcd/clear lcd)
+                        (lcd/print lcd "TILTED"))
+                :high (do
+                       (lcd/clear lcd)
+                       (lcd/print lcd "RESET"))))
+            (recur (inc x)))]
+
+      (Thread/sleep 30000)
+      (a/unsub (f/event-publisher board) [:digital-msg 6] tc)
+
+      (a/close! gl))
+    #_(f/close! board))
+
+  (f/query-pin-state board 6)
+
+  
+
+
+  (def tilt-sub (a/sub (f/event-publisher board) [:digital-msg 6] tilt-channel))
+
+
+  
+
+
+  ;;; end tilt switch
+
+  (-> lcd
+    (lcd/clear)
+    (lcd/print "0123456789abc")
+    (lcd/display))
   (lcd/set-cursor lcd 0 0)
 
   (lcd/autoscroll lcd) ;; doesn't work?
@@ -56,7 +147,7 @@
 
 
   (lcd/home lcd)
-  (lcd/set-cursor lcd 0 1)
+  (lcd/set-cursor lcd 1 1)
   (lcd/print lcd "3")
   (lcd/println lcd "hello")
   (lcd/scroll-display-left lcd)
