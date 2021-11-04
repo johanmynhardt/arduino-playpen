@@ -2,34 +2,11 @@
   (:require [firmata.core :as f]
             [firmata.async :as fa]
             [partsbox.lcd :as lcd]
+            [util]
             [clojure.core.async :as a :refer [<! >! <!! chan go-loop alts! timeout]]
             [clojure.string :as str]))
 
-(defn debounce-chan
-  "Debouncer from: https://gist.github.com/xfsnowind/e15cc2e6da74df81f129"
-  ([source msecs]
-   (debounce-chan (chan) source msecs))
-  ([c source msecs]
-   (go-loop [state ::init
-             last-one nil
-             cs [source]]
 
-     (let [[_ threshold] cs
-           [v sc] (alts! cs)]
-       (condp = sc
-         source
-         (condp = state
-           ::init (recur ::debouncing v (conj cs (timeout msecs)))
-           ::debouncing (recur state v (conj (pop cs) (timeout msecs))))
-
-         threshold
-         (cond last-one
-               (do (>! c last-one)
-                   (recur ::init nil (pop cs)))
-
-               :else
-               (recur ::init last-one (pop cs))))))
-   c))
 
 (comment
 
@@ -81,7 +58,7 @@
         tc (chan)
         tsub (-> (f/event-publisher board)
                  (a/sub [:digital-msg 6] tc)
-                 (debounce-chan 100))]
+                 (util/debounce 100))]
     (lcd/clear lcd)
     (lcd/print lcd "Start tilting!")
     (let [gl
@@ -106,15 +83,6 @@
     #_(f/close! board))
 
   (f/query-pin-state board 6)
-
-  
-
-
-  (def tilt-sub (a/sub (f/event-publisher board) [:digital-msg 6] tilt-channel))
-
-
-  
-
 
   ;;; end tilt switch
 
