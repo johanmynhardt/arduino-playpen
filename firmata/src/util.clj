@@ -1,5 +1,6 @@
 (ns util
-  (:require [clojure.core.async :refer [chan go-loop timeout alts! >! ]]))
+  (:require [clojure.core.async :refer [chan go-loop timeout alts! >! ]]
+            [clojure.string :as str]))
 
 (defn raw->pwm [value]
   (-> value
